@@ -61,19 +61,39 @@
     (lambda (el) (eq nil el))
     (list comby-binary match-template rewrite-template comby-args flags full-file-paths-or-file-suffixes))))
 
-(defun comby-run (match-template rewrite-template &optional full-file-paths-or-file-suffixes &rest flags)
-  "Run comby command for rewriting MATCH-TEMPLATE by REWRITE-TEMPLATE inside FULL-FILE-PATHS-OR-FILE-SUFFIXES with additional FLAGS."
+(defun comby-run (match-template rewrite-template &optional full-file-paths-or-file-suffixes &key changed-file-func &rest flags)
+  "Run comby command for rewriting MATCH-TEMPLATE by REWRITE-TEMPLATE.
+Inside FULL-FILE-PATHS-OR-FILE-SUFFIXES with additional FLAGS.  On every changed
+file will be executed CHANGED-FILE-FUNC.  It is function with single argument -
+changed file path."
   (let* ((cur-buf (buffer-name))
 	 (buf (generate-new-buffer "*comby*"))
 	 (cmd (flatten-list (list "comby" buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags))))
-	 (apply-cmd (append cmd '("-in-place"))))
+	 (apply-cmd (append cmd '("-in-place")))
+	 (diff-buf (generate-new-buffer "*comby-diff*"))
+	 (diff-cmd (flatten-list (list "comby" diff-buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags) "-diff"))))
     (if (not comby-show-changes)
-	(set-process-sentinel
-	 (apply 'start-process apply-cmd)
-	 (lambda (_1 _2)
-	   (kill-buffer buf)
-	   (with-current-buffer cur-buf
-	     (revert-buffer nil t))))
+	(if changed-file-func
+	    (set-process-sentinel
+	     (apply 'start-process diff-cmd)
+	     (lambda (_1 _2)
+	       (let ((changed-files (with-current-buffer diff-buf
+				      (comby--extract-changed-files-list))))
+		 (set-process-sentinel
+		  (apply 'start-process apply-cmd)
+		  (lambda (_1 _2)
+		    (dolist (file changed-files)
+		      (funcall changed-file-func file))
+		    (kill-buffer buf)
+		    (kill-buffer diff-buf)
+		    (with-current-buffer cur-buf
+		      (revert-buffer nil t)))))))
+	  (set-process-sentinel
+	   (apply 'start-process apply-cmd)
+	   (lambda (_1 _2)
+	     (kill-buffer buf)
+	     (with-current-buffer cur-buf
+	       (revert-buffer nil t)))))
       (let* ((proc (apply 'start-process cmd)))
 	(set-process-sentinel proc
 			      (lambda (_arg1 _arg2)
@@ -91,10 +111,28 @@
 						   (set-process-sentinel
 						    (apply 'start-process apply-cmd)
 						    (lambda (_1 _2)
+						      (if changed-file-func
+							  (dolist (file (comby--extract-changed-files-list))
+							    (funcall changed-file-func file)))
 						      (kill-buffer buf)
 						      (with-current-buffer cur-buf
 							(revert-buffer nil t)))))))
 				(switch-to-buffer buf)))))))
+
+
+(defun comby--extract-changed-files-list ()
+  "Extract changed file list from result buffer.
+For internal usage."
+  (save-excursion
+    (save-match-data
+      (let ((res nil))
+	(goto-char (point-min))
+	(while
+	    (re-search-forward
+	     (rx line-start (or (+ "-") (+ "+")) " " (group (+ not-newline)))
+	     nil t)
+	  (push (match-string-no-properties 1) res))
+	(cl-remove-duplicates res :test 'string-equal)))))
 
 ;;;###autoload
 (defun comby (&optional beg end)
