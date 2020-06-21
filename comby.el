@@ -30,7 +30,7 @@
 ;;; Code:
 (require 'cl-lib)
 (require 'ansi-color)
-(require 'project nil t)
+(require 'project)
 
 (defgroup comby nil
   "Comby is a tool for searching and changing code structure."
@@ -56,31 +56,31 @@
 
 (defun comby-create-command (match-template rewrite-template &optional full-file-paths-or-file-suffixes &rest flags)
   "Create comby command for rewriting MATCH-TEMPLATE by REWRITE-TEMPLATE inside FULL-FILE-PATHS-OR-FILE-SUFFIXES with additional FLAGS."
-  (flatten-list
+  (comby--flatten-tree
    (cl-remove-if
-    (lambda (el) (eq nil el))
+    (lambda (el) (not el))
     (list comby-binary match-template rewrite-template comby-args flags full-file-paths-or-file-suffixes))))
 
 (defun comby-run (match-template rewrite-template &optional full-file-paths-or-file-suffixes &key changed-file-func &rest flags)
   "Run comby command for rewriting MATCH-TEMPLATE by REWRITE-TEMPLATE.
 Inside FULL-FILE-PATHS-OR-FILE-SUFFIXES with additional FLAGS.  On every changed
-file will be executed CHANGED-FILE-FUNC.  It is function with single argument -
+file will be executed &KEY CHANGED-FILE-FUNC.  It is function with single argument -
 changed file path."
   (let* ((cur-buf (buffer-name))
 	 (buf (generate-new-buffer "*comby*"))
-	 (cmd (flatten-list (list "comby" buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags))))
+	 (cmd (comby--flatten-tree (list "comby" buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags))))
 	 (apply-cmd (append cmd '("-in-place")))
 	 (diff-buf (generate-new-buffer "*comby-diff*"))
-	 (diff-cmd (flatten-list (list "comby" diff-buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags) "-diff"))))
+	 (diff-cmd (comby--flatten-tree (list "comby" diff-buf (comby-create-command match-template rewrite-template full-file-paths-or-file-suffixes flags) "-diff"))))
     (if (not comby-show-changes)
 	(if changed-file-func
 	    (set-process-sentinel
-	     (apply 'start-process diff-cmd)
+	     (apply #'start-process diff-cmd)
 	     (lambda (_1 _2)
 	       (let ((changed-files (with-current-buffer diff-buf
 				      (comby--extract-changed-files-list))))
 		 (set-process-sentinel
-		  (apply 'start-process apply-cmd)
+		  (apply #'start-process apply-cmd)
 		  (lambda (_1 _2)
 		    (dolist (file changed-files)
 		      (funcall changed-file-func file))
@@ -89,12 +89,12 @@ changed file path."
 		    (with-current-buffer cur-buf
 		      (revert-buffer nil t)))))))
 	  (set-process-sentinel
-	   (apply 'start-process apply-cmd)
+	   (apply #'start-process apply-cmd)
 	   (lambda (_1 _2)
 	     (kill-buffer buf)
 	     (with-current-buffer cur-buf
 	       (revert-buffer nil t)))))
-      (let* ((proc (apply 'start-process cmd)))
+      (let* ((proc (apply #'start-process cmd)))
 	(set-process-sentinel proc
 			      (lambda (_arg1 _arg2)
 				(with-current-buffer buf
@@ -102,14 +102,13 @@ changed file path."
 				  (goto-char (point-min))
 				  (insert comby-header)
 				  (read-only-mode 1)
-				  (setq-local comby--current-command apply-cmd)
 				  (local-set-key (kbd "q") (lambda ()
 							     (interactive) (kill-buffer buf)))
 				  (local-set-key (kbd "C-c C-c")
 						 (lambda ()
 						   (interactive)
 						   (set-process-sentinel
-						    (apply 'start-process apply-cmd)
+						    (apply #'start-process apply-cmd)
 						    (lambda (_1 _2)
 						      (if changed-file-func
 							  (dolist (file (comby--extract-changed-files-list))
@@ -134,13 +133,32 @@ For internal usage."
 	  (push (match-string-no-properties 1) res))
 	(cl-remove-duplicates res :test 'string-equal)))))
 
+(defun comby--flatten-tree (tree)
+  "Return a \"flattened\" copy of TREE.
+In other words, return a list of the non-nil terminal nodes, or
+leaves, of the tree of cons cells rooted at TREE.  Leaves in the
+returned list are in the same order as in TREE.  This code is
+is backported `flatten-tree' from GNU Emacs 27.1.
+
+\(comby--flatten-tree \\='(1 (2 . 3) nil (4 5 (6)) 7))
+=> (1 2 3 4 5 6 7)"
+  (let (elems)
+    (while (consp tree)
+      (let ((elem (pop tree)))
+        (while (consp elem)
+          (push (cdr elem) tree)
+          (setq elem (car elem)))
+        (if elem (push elem elems))))
+    (if tree (push tree elems))
+    (nreverse elems)))
+
 ;;;###autoload
 (defun comby (&optional beg end)
   "Refactor your code by `comby'.
 If you have active selection between BEG & END, it will be initial input for match template."
   (interactive "r")
   (let* ((project (project-current))
-	 (project-root (if project (project-root project)))
+	 (project-root (if project (car (project-roots project))))
 	 (default-directory (if project-root
 				project-root
 			      default-directory))
