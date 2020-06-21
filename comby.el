@@ -61,10 +61,10 @@
     (lambda (el) (not el))
     (list comby-binary match-template rewrite-template comby-args flags full-file-paths-or-file-suffixes))))
 
-(defun comby-run (match-template rewrite-template &optional full-file-paths-or-file-suffixes &key changed-file-func &rest flags)
+(defun comby-run (match-template rewrite-template &optional full-file-paths-or-file-suffixes changed-file-func &rest flags)
   "Run comby command for rewriting MATCH-TEMPLATE by REWRITE-TEMPLATE.
 Inside FULL-FILE-PATHS-OR-FILE-SUFFIXES with additional FLAGS.  On every changed
-file will be executed &KEY CHANGED-FILE-FUNC.  It is function with single argument -
+file will be executed CHANGED-FILE-FUNC.  It is function with single argument -
 changed file path."
   (let* ((cur-buf (buffer-name))
 	 (buf (generate-new-buffer "*comby*"))
