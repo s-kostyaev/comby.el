@@ -94,6 +94,7 @@ changed file path."
 	     (kill-buffer buf)
 	     (with-current-buffer cur-buf
 	       (revert-buffer nil t)))))
+      (kill-buffer diff-buf)
       (let* ((proc (apply #'start-process cmd)))
 	(set-process-sentinel proc
 			      (lambda (_arg1 _arg2)
